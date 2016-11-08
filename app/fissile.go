@@ -334,6 +334,8 @@ func (f *Fissile) GeneratePackagesRoleImage(repository string, roleManifest *mod
 	f.UI.Printf("Creating Dockerfile for packages layer...\n")
 	tarStream, errors, err := packagesImageBuilder.CreatePackagesDockerStream(roleManifest, lightManifestPath, darkManifestPath, force)
 	if err != nil {
+		// If packagesImageBuilder.CreatePackagesDockerStream returns an error immediately.
+		// There's nothing of interest in the errors channel yet.
 		return err
 	}
 	defer tarStream.Close()
@@ -352,13 +354,20 @@ func (f *Fissile) GeneratePackagesRoleImage(repository string, roleManifest *mod
 	)
 
 	err = dockerManager.BuildImageFromStream(tarStream, packagesLayerImageName, stdoutWriter)
+	previousError := <-errors
 	if err != nil {
 		log.WriteTo(f.UI)
-		return fmt.Errorf("Error building packages layer docker image: %s", err.Error())
+		var finalError error
+		if previousError != nil {
+			// This error most likely triggered the error returned by BuildImageFromStream
+			finalError = previousError
+		} else {
+			finalError = err
+		}
+		return fmt.Errorf("Error building packages layer docker image: %s", finalError)
 	}
 	f.UI.Println(color.GreenString("Done."))
-
-	return <-errors
+	return previousError
 }
 
 // GenerateRoleImages generates all role images using dev releases
@@ -460,28 +469,6 @@ func (f *Fissile) ListRoleImages(repository string, rolesManifestPath string, ex
 			f.UI.Println(imageName)
 		}
 	}
-
-	return nil
-}
-
-//GenerateConfigurationBase generates a configuration base using dev BOSH releases and opinions from manifests
-func (f *Fissile) GenerateConfigurationBase(rolesManifestPath, lightManifestPath, darkManifestPath, targetPath, provider string) error {
-	if len(f.releases) == 0 {
-		return fmt.Errorf("Releases not loaded")
-	}
-
-	rolesManifest, err := model.LoadRoleManifest(rolesManifestPath, f.releases)
-	if err != nil {
-		return fmt.Errorf("Error loading roles manifest: %s", err.Error())
-	}
-
-	configStore := configstore.NewConfigStoreBuilder(provider, lightManifestPath, darkManifestPath, targetPath)
-
-	if err := configStore.WriteBaseConfig(rolesManifest); err != nil {
-		return fmt.Errorf("Error writing base config: %s", err.Error())
-	}
-
-	f.UI.Println(color.GreenString("Done."))
 
 	return nil
 }
